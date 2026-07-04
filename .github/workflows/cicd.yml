@@ -1,0 +1,186 @@
+name: Multi-Cloud CI/CD Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  APP_NAME: multicloud-cicd-demo
+  NODE_VERSION: "20"
+  AWS_REGION: us-east-1
+  GCP_REGION: us-central1
+  GCP_PROJECT: ${{ secrets.GCP_PROJECT_ID }}
+
+jobs:
+  # ─────────────────────────────────────────
+  # Stage 1: Build & Test
+  # ─────────────────────────────────────────
+  build-and-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install dependencies
+        working-directory: app
+        run: npm ci
+
+      - name: Run tests
+        working-directory: app
+        run: npm test
+
+      - name: Build Docker image
+        run: |
+          docker build -t $APP_NAME:${{ github.sha }} ./app
+          docker tag $APP_NAME:${{ github.sha }} $APP_NAME:latest
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-build
+          path: app/
+          retention-days: 1
+
+  # ─────────────────────────────────────────
+  # Stage 2: Deploy to AWS EC2
+  # ─────────────────────────────────────────
+  deploy-aws:
+    name: Deploy to AWS (EC2)
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    if: github.ref == 'refs/heads/main'
+    environment: aws-production
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Push image to ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          docker build -t $ECR_REGISTRY/$APP_NAME:${{ github.sha }} ./app
+          docker push $ECR_REGISTRY/$APP_NAME:${{ github.sha }}
+          docker tag $ECR_REGISTRY/$APP_NAME:${{ github.sha }} $ECR_REGISTRY/$APP_NAME:latest
+          docker push $ECR_REGISTRY/$APP_NAME:latest
+
+      - name: Deploy to EC2 via SSH
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.AWS_EC2_HOST }}
+          username: ec2-user
+          key: ${{ secrets.AWS_EC2_SSH_KEY }}
+          script: |
+            # Pull latest image and restart container
+            aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
+              docker login --username AWS --password-stdin ${{ secrets.AWS_ECR_REGISTRY }}
+            docker pull ${{ secrets.AWS_ECR_REGISTRY }}/${{ env.APP_NAME }}:latest
+            docker stop ${{ env.APP_NAME }} || true
+            docker rm ${{ env.APP_NAME }} || true
+            docker run -d \
+              --name ${{ env.APP_NAME }} \
+              --restart unless-stopped \
+              -p 3000:3000 \
+              -e CLOUD_PROVIDER=AWS \
+              -e ENV=production \
+              -e APP_VERSION=${{ github.sha }} \
+              ${{ secrets.AWS_ECR_REGISTRY }}/${{ env.APP_NAME }}:latest
+            echo "Deployed version ${{ github.sha }} to AWS EC2"
+
+  # ─────────────────────────────────────────
+  # Stage 3: Deploy to GCP Cloud Run
+  # ─────────────────────────────────────────
+  deploy-gcp:
+    name: Deploy to GCP (Cloud Run)
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    if: github.ref == 'refs/heads/main'
+    environment: gcp-production
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for GCP
+        run: gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev
+
+      - name: Build and push to Artifact Registry
+        run: |
+          IMAGE="${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT }}/${{ env.APP_NAME }}/${{ env.APP_NAME }}:${{ github.sha }}"
+          docker build -t $IMAGE ./app
+          docker push $IMAGE
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy ${{ env.APP_NAME }} \
+            --image="${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT }}/${{ env.APP_NAME }}/${{ env.APP_NAME }}:${{ github.sha }}" \
+            --region=${{ env.GCP_REGION }} \
+            --platform=managed \
+            --allow-unauthenticated \
+            --set-env-vars="CLOUD_PROVIDER=GCP,ENV=production,APP_VERSION=${{ github.sha }}" \
+            --memory=256Mi \
+            --cpu=1 \
+            --min-instances=0 \
+            --max-instances=3
+
+  # ─────────────────────────────────────────
+  # Stage 4: Post-deployment health check
+  # ─────────────────────────────────────────
+  health-check:
+    name: Health Check
+    runs-on: ubuntu-latest
+    needs: [deploy-aws, deploy-gcp]
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Health check AWS
+        run: |
+          echo "Checking AWS endpoint..."
+          curl -f http://${{ secrets.AWS_EC2_HOST }}:3000/health || exit 1
+          echo "AWS: OK"
+
+      - name: Health check GCP
+        run: |
+          echo "Checking GCP Cloud Run endpoint..."
+          GCP_URL=$(gcloud run services describe ${{ env.APP_NAME }} \
+            --region=${{ env.GCP_REGION }} \
+            --format='value(status.url)')
+          curl -f $GCP_URL/health || exit 1
+          echo "GCP: OK"
+
+      - name: Notify success
+        run: |
+          echo "Deployment complete."
+          echo "Version: ${{ github.sha }}"
+          echo "AWS EC2: http://${{ secrets.AWS_EC2_HOST }}:3000"
+          echo "GCP Cloud Run: deployed"

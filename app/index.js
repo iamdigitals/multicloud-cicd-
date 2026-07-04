@@ -1,0 +1,28 @@
+const express = require("express");
+const os = require("os");
+const app = express();
+const PORT = process.env.PORT || 3000;
+const ENV = process.env.ENV || "production";
+const CLOUD = process.env.CLOUD_PROVIDER || "AWS";
+
+app.get("/", (req, res) => {
+  res.json({
+    status: "healthy",
+    service: "multicloud-cicd-demo",
+    version: process.env.APP_VERSION || "1.0.0",
+    environment: ENV,
+    cloud_provider: CLOUD,
+    hostname: os.hostname(),
+    timestamp: new Date().toISOString(),
+  });
+});
+
+app.get("/health", (req, res) => {
+  res.status(200).json({ status: "ok" });
+});
+
+app.listen(PORT, () => {
+  console.log(`[${CLOUD}] Server running on port ${PORT} in ${ENV} mode`);
+});
+
+module.exports = app;

@@ -103,13 +103,16 @@ jobs:
           docker push $ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
 
       - name: Authenticate to GCP
+        if: false # Paused until GCP project + secrets are set up — see README
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
       - uses: google-github-actions/setup-gcloud@v2
+        if: false # Paused until GCP project + secrets are set up
 
       - name: Push to GCP Artifact Registry
+        if: false # Paused until GCP project + secrets are set up
         run: |
           gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev --quiet
           IMAGE="${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT }}/${{ env.PROJECT_NAME }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}"
@@ -184,6 +187,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: build-and-push
     environment: gcp-production
+    if: false # Paused until GCP project + secrets are set up — see README
     steps:
       - uses: google-github-actions/auth@v2
         with:
@@ -245,8 +249,9 @@ jobs:
     steps:
       - name: Report result
         run: |
-          if [ "${{ needs.deploy-aws.result }}" = "success" ] && [ "${{ needs.deploy-gcp.result }}" = "success" ]; then
-            echo "Deployment succeeded on both clouds — version ${{ github.sha }}"
+          if [ "${{ needs.deploy-aws.result }}" = "success" ]; then
+            echo "AWS deployment succeeded — version ${{ github.sha }}"
           else
-            echo "Deployment had failures — check the deploy-aws and deploy-gcp job logs"
+            echo "AWS deployment had failures — check the deploy-aws job logs"
           fi
+          echo "GCP deploy status: ${{ needs.deploy-gcp.result }} (paused until GCP setup is complete)"

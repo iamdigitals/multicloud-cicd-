@@ -17,6 +17,23 @@ push a tagged image, then run `terraform apply -var="app_image_tag=<sha>"`
 (or update the task definition directly via `aws ecs update-service` with a
 new task def revision — that's what the GitHub Actions workflow will do next).
 
+## Security scan results (tfsec)
+
+This configuration has been through `tfsec` and remediated where it made sense
+for a public-facing demo:
+
+**Fixed:**
+- ECR, CloudWatch logs, and SNS are encrypted with a customer-managed KMS key (`kms.tf`)
+- VPC Flow Logs are enabled and shipped to CloudWatch (`flow-logs.tf`)
+- ALB drops invalid headers
+- All security group rules have descriptions
+
+**Intentionally accepted (documented inline with `tfsec:ignore` + reasoning):**
+- The ALB is public and listens on HTTP only — there's no domain/ACM cert yet.
+  See "What's intentionally left out" below for the HTTPS plan.
+- Security group egress is open — tasks need outbound access to pull images
+  and ship logs; there's no sensitive inbound data to exfiltrate.
+
 ## What's intentionally left out
 
 - **Remote state backend** — commented out in `providers.tf`. Point it at an

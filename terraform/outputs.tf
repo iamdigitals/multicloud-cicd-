@@ -20,6 +20,15 @@ output "cloudwatch_log_group" {
   value = aws_cloudwatch_log_group.app.name
 }
 
+output "kms_key_arn" {
+  description = "Customer-managed key used to encrypt ECR, CloudWatch logs, and SNS"
+  value       = aws_kms_key.main.arn
+}
+
+output "vpc_flow_log_group" {
+  value = aws_cloudwatch_log_group.vpc_flow_logs.name
+}
+
 output "sns_alerts_topic_arn" {
   description = "Subscribe additional endpoints (e.g. a Slack webhook via Chatbot) here"
   value       = aws_sns_topic.alerts.arn

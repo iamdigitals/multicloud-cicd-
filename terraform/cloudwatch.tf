@@ -1,10 +1,12 @@
 resource "aws_cloudwatch_log_group" "app" {
   name              = "/ecs/${var.project_name}-app"
   retention_in_days = 30
+  kms_key_id        = aws_kms_key.main.arn
 }
 
 resource "aws_sns_topic" "alerts" {
-  name = "${var.project_name}-alerts"
+  name              = "${var.project_name}-alerts"
+  kms_master_key_id = aws_kms_key.main.id
 }
 
 resource "aws_sns_topic_subscription" "email" {

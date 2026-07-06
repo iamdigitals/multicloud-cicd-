@@ -16,6 +16,7 @@ resource "aws_internet_gateway" "main" {
 }
 
 # Public subnets — one per AZ, host the ALB and NAT gateways
+#tfsec:ignore:aws-ec2-no-public-ip-subnet Public subnets host the ALB and NAT gateways by design — private workloads stay in the private subnets below.
 resource "aws_subnet" "public" {
   count                   = length(var.availability_zones)
   vpc_id                  = aws_vpc.main.id

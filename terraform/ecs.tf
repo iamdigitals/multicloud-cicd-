@@ -20,7 +20,9 @@ resource "aws_security_group" "ecs_tasks" {
     security_groups = [aws_security_group.alb.id]
   }
 
+  #tfsec:ignore:aws-ec2-no-public-egress-sgr Tasks need outbound internet (via NAT) to pull images from ECR and ship logs/metrics — no inbound exposure.
   egress {
+    description = "Outbound to ECR, CloudWatch, and other AWS services via NAT"
     from_port   = 0
     to_port     = 0
     protocol    = "-1"

@@ -17,6 +17,7 @@ resource "aws_iam_role" "vpc_flow_logs" {
   })
 }
 
+#tfsec:ignore:aws-iam-no-policy-wildcards The trailing :* is required to cover log streams within this log group — streams have dynamic names, this is the standard AWS-recommended pattern for CloudWatch Logs permissions.
 resource "aws_iam_role_policy" "vpc_flow_logs" {
   name = "${var.project_name}-vpc-flow-logs-policy"
   role = aws_iam_role.vpc_flow_logs.id
